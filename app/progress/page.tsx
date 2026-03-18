@@ -283,8 +283,6 @@ function TopicProgressChart({
 }) {
   const hasHistory = snapshots.length >= 2;
   const oldest = hasHistory ? snapshots[0].topicScores : null;
-  const current = snapshots.length > 0 ? snapshots[snapshots.length - 1].topicScores : null;
-
   const data = TOPICS.filter((t) => {
     const score = skillProfile.topics.find((ts) => ts.topicId === t.id);
     return score && score.attempted >= 3;

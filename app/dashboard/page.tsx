@@ -6,6 +6,7 @@ import { AppNav } from "@/components/app-nav";
 import { SkillRadarChart } from "@/components/skill-radar-chart";
 import { Button } from "@/components/ui/button";
 import type { SkillProfile } from "@/lib/analysis";
+import { mergeSkillProfiles } from "@/lib/analysis";
 import type { Recommendation } from "@/app/api/recommend/route";
 import { supabase } from "@/lib/supabase";
 import {
@@ -24,12 +25,24 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type PlatformView = "cf" | "lc" | "combined";
+
 interface DashboardData {
+  // CF
   handle: string;
   rating: number;
   maxRating: number;
   rank: string;
-  skillProfile: SkillProfile;
+  cfSkillProfile: SkillProfile | null;
+  // LC
+  lcUsername: string | null;
+  lcContestRating: number;
+  lcSkillProfile: SkillProfile | null;
+  // Merged
+  combinedSkillProfile: SkillProfile | null;
+  // Convenience alias used by downstream components (set to combined/cf/lc based on toggle)
+  skillProfile: SkillProfile | null;
+  // Stats (CF-sourced)
   problemsThisWeek: number;
   currentStreak: number;
   ratingPrediction: number;
@@ -50,38 +63,55 @@ function ratingColor(rating: number): string {
   return "text-[#808080]";
 }
 
-// ── Handle form ───────────────────────────────────────────────────────────────
+// ── Handle form (CF + LC) ─────────────────────────────────────────────────────
 
 function HandleForm({ onLoad }: { onLoad: (data: DashboardData) => void }) {
-  const [handle, setHandle] = useState("");
+  const [cfHandle, setCfHandle] = useState("");
+  const [lcUsername, setLcUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const canSubmit = cfHandle.trim() || lcUsername.trim();
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!handle.trim()) return;
+    if (!canSubmit) return;
     setError("");
     setLoading(true);
 
     try {
-      const res = await fetch(`/api/codeforces/sync?handle=${encodeURIComponent(handle.trim())}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load profile");
+      // Fetch CF and LC in parallel (skip whichever wasn't provided)
+      const [cfRes, lcRes] = await Promise.all([
+        cfHandle.trim()
+          ? fetch(`/api/codeforces/sync?handle=${encodeURIComponent(cfHandle.trim())}`)
+          : null,
+        lcUsername.trim()
+          ? fetch(`/api/leetcode/sync?username=${encodeURIComponent(lcUsername.trim())}`)
+          : null,
+      ]);
 
-      // Sync API returns ProfileAnalysis — user fields are nested under data.user
-      const cfUser = data.user;
+      // Parse CF
+      let cfData: { user: { handle: string; rating: number; maxRating: number; rank: string }; recentSubmissions: { verdict: string; submittedAt: number; problemKey: string }[]; skillProfile: SkillProfile | null } | null = null;
+      if (cfRes) {
+        const d = await cfRes.json();
+        if (!cfRes.ok) throw new Error(d.error ?? "Failed to load Codeforces profile");
+        cfData = d;
+      }
 
-      // Calculate this-week stats
-      // ProcessedSubmission uses `submittedAt` (unix seconds), not `creationTimeSeconds`
+      // Parse LC
+      let lcData: { profile: { contestRating: number }; skillProfile: SkillProfile | null } | null = null;
+      if (lcRes) {
+        const d = await lcRes.json();
+        if (!lcRes.ok) throw new Error(d.error ?? "Failed to load LeetCode profile");
+        lcData = d;
+      }
+
+      const cfUser = cfData?.user;
+      const recentSubs = cfData?.recentSubmissions ?? [];
       const oneWeekAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
-      const recentSubs: { verdict: string; submittedAt: number; problemKey: string }[] =
-        data.recentSubmissions ?? [];
-
       const problemsThisWeek = recentSubs.filter(
         (s) => s.verdict === "OK" && s.submittedAt >= oneWeekAgo
       ).length;
-
-      // Days with at least one AC (from the last 50 submissions returned by sync)
       const daySet = new Set<string>();
       recentSubs.forEach((s) => {
         if (s.verdict === "OK") {
@@ -89,23 +119,28 @@ function HandleForm({ onLoad }: { onLoad: (data: DashboardData) => void }) {
           daySet.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
         }
       });
+      const solvedKeys = recentSubs.filter((s) => s.verdict === "OK").map((s) => s.problemKey);
 
-      // All solved problem keys (used to avoid re-recommending solved problems)
-      const solvedKeys = recentSubs
-        .filter((s) => s.verdict === "OK")
-        .map((s) => s.problemKey);
+      const cfSkillProfile = cfData?.skillProfile ?? null;
+      const lcSkillProfile = lcData?.skillProfile ?? null;
+      const combinedSkillProfile = mergeSkillProfiles(cfSkillProfile, lcSkillProfile);
 
       const rating = cfUser?.rating ?? 0;
-      const ratingDelta = data.skillProfile
-        ? Math.round((data.skillProfile.overallScore - 50) * 4)
+      const ratingDelta = combinedSkillProfile
+        ? Math.round((combinedSkillProfile.overallScore - 50) * 4)
         : 0;
 
       onLoad({
-        handle: cfUser?.handle ?? handle.trim(),
+        handle: cfUser?.handle ?? (cfHandle.trim() || lcUsername.trim()),
         rating,
         maxRating: cfUser?.maxRating ?? 0,
         rank: cfUser?.rank ?? "unrated",
-        skillProfile: data.skillProfile,
+        cfSkillProfile,
+        lcUsername: lcUsername.trim() || null,
+        lcContestRating: lcData?.profile?.contestRating ?? 0,
+        lcSkillProfile,
+        combinedSkillProfile,
+        skillProfile: combinedSkillProfile,
         problemsThisWeek,
         currentStreak: daySet.size,
         ratingPrediction: rating + ratingDelta,
@@ -118,6 +153,9 @@ function HandleForm({ onLoad }: { onLoad: (data: DashboardData) => void }) {
     }
   }
 
+  const inputClass =
+    "w-full rounded-lg border border-border/50 bg-background/50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-colors";
+
   return (
     <div className="flex flex-col items-center gap-6 py-20 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -126,28 +164,78 @@ function HandleForm({ onLoad }: { onLoad: (data: DashboardData) => void }) {
       <div>
         <h2 className="text-2xl font-bold text-foreground">Load your profile</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Enter your Codeforces handle to see your personalized dashboard
+          Enter your Codeforces handle and/or LeetCode username
         </p>
       </div>
-      <form onSubmit={submit} className="flex w-full max-w-sm gap-2">
-        <input
-          value={handle}
-          onChange={(e) => setHandle(e.target.value)}
-          placeholder="e.g. tourist"
-          className="flex-1 rounded-lg border border-border/50 bg-background/50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-colors"
-        />
+      <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-3">
+        <div className="flex flex-col gap-1.5 text-left">
+          <label className="text-xs font-medium text-muted-foreground">Codeforces handle</label>
+          <input
+            value={cfHandle}
+            onChange={(e) => setCfHandle(e.target.value)}
+            placeholder="e.g. tourist"
+            className={inputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5 text-left">
+          <label className="text-xs font-medium text-muted-foreground">LeetCode username</label>
+          <input
+            value={lcUsername}
+            onChange={(e) => setLcUsername(e.target.value)}
+            placeholder="e.g. neal_wu"
+            className={inputClass}
+          />
+        </div>
         <Button
           type="submit"
-          disabled={loading || !handle.trim()}
+          disabled={loading || !canSubmit}
           className="gap-1.5 bg-primary font-semibold shadow-sm shadow-primary/20"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
           Load
         </Button>
       </form>
-      {error && (
-        <p className="text-sm text-red-400">{error}</p>
-      )}
+      {error && <p className="text-sm text-red-400">{error}</p>}
+    </div>
+  );
+}
+
+// ── Platform toggle ────────────────────────────────────────────────────────────
+
+function PlatformToggle({
+  data,
+  platform,
+  onChange,
+}: {
+  data: DashboardData;
+  platform: PlatformView;
+  onChange: (p: PlatformView) => void;
+}) {
+  const hasCF = !!data.cfSkillProfile;
+  const hasLC = !!data.lcSkillProfile;
+  if (!hasCF || !hasLC) return null;
+
+  const options: { key: PlatformView; label: string }[] = [
+    { key: "cf", label: "Codeforces" },
+    { key: "lc", label: "LeetCode" },
+    { key: "combined", label: "Combined" },
+  ];
+
+  return (
+    <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-card/60 p-1">
+      {options.map(({ key, label }) => (
+        <button
+          key={key}
+          onClick={() => onChange(key)}
+          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+            platform === key
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -496,6 +584,7 @@ function ContestHistoryCard() {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [platform, setPlatform] = useState<PlatformView>("combined");
 
   // Restore from sessionStorage so page refresh doesn't lose state
   useEffect(() => {
@@ -507,10 +596,26 @@ export default function DashboardPage() {
 
   function handleLoad(d: DashboardData) {
     setData(d);
+    // Default view: combined if both available, else whichever is present
+    setPlatform(d.cfSkillProfile && d.lcSkillProfile ? "combined" : d.lcSkillProfile ? "lc" : "cf");
     try {
       sessionStorage.setItem("dashboard_data", JSON.stringify(d));
     } catch {}
   }
+
+  // Derive active skill profile from toggle state
+  const activeSkillProfile = data
+    ? platform === "cf"
+      ? data.cfSkillProfile
+      : platform === "lc"
+      ? data.lcSkillProfile
+      : data.combinedSkillProfile
+    : null;
+
+  const displayHandle =
+    data && platform === "lc" && data.lcUsername
+      ? data.lcUsername
+      : data?.handle ?? "";
 
   return (
     <div className="min-h-screen bg-background">
@@ -526,37 +631,69 @@ export default function DashboardPage() {
               <div>
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">
                   Hey,{" "}
-                  <a
-                    href={`https://codeforces.com/profile/${data.handle}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="transition-opacity hover:opacity-80"
-                  >
-                    <span className={ratingColor(data.rating)}>{data.handle}</span>
-                  </a>{" "}
+                  {platform === "lc" && data.lcUsername ? (
+                    <a
+                      href={`https://leetcode.com/${data.lcUsername}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="transition-opacity hover:opacity-80"
+                    >
+                      <span className="text-amber-400">{data.lcUsername}</span>
+                    </a>
+                  ) : (
+                    <a
+                      href={`https://codeforces.com/profile/${data.handle}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="transition-opacity hover:opacity-80"
+                    >
+                      <span className={ratingColor(data.rating)}>{data.handle}</span>
+                    </a>
+                  )}{" "}
                   👋
                 </h1>
                 <p className="mt-1 text-sm text-muted-foreground capitalize">
-                  {data.rank} · Current rating:{" "}
-                  <span className={`font-semibold ${ratingColor(data.rating)}`}>{data.rating}</span>
-                  {data.maxRating > data.rating && (
-                    <span className="ml-1 text-muted-foreground/60">(max {data.maxRating})</span>
+                  {platform === "lc" && !data.cfSkillProfile ? (
+                    <>
+                      LeetCode · Contest rating:{" "}
+                      <span className="font-semibold text-amber-400">
+                        {data.lcContestRating || "unrated"}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {data.rank} · CF rating:{" "}
+                      <span className={`font-semibold ${ratingColor(data.rating)}`}>
+                        {data.rating}
+                      </span>
+                      {data.maxRating > data.rating && (
+                        <span className="ml-1 text-muted-foreground/60">(max {data.maxRating})</span>
+                      )}
+                      {data.lcUsername && platform !== "cf" && data.lcContestRating > 0 && (
+                        <span className="ml-2 text-muted-foreground/60">
+                          · LC {data.lcContestRating}
+                        </span>
+                      )}
+                    </>
                   )}
                 </p>
               </div>
-              <div className="flex gap-2">
-                <Link href="/problems">
-                  <Button variant="outline" size="sm" className="gap-1.5 border-border/50">
-                    <Trophy className="h-4 w-4" />
-                    Practice
-                  </Button>
-                </Link>
-                <Link href="/coach">
-                  <Button size="sm" className="gap-1.5 bg-primary font-semibold shadow-sm shadow-primary/20">
-                    <BrainCircuit className="h-4 w-4" />
-                    Start coaching
-                  </Button>
-                </Link>
+              <div className="flex flex-col items-end gap-2">
+                <PlatformToggle data={data} platform={platform} onChange={setPlatform} />
+                <div className="flex gap-2">
+                  <Link href="/problems">
+                    <Button variant="outline" size="sm" className="gap-1.5 border-border/50">
+                      <Trophy className="h-4 w-4" />
+                      Practice
+                    </Button>
+                  </Link>
+                  <Link href="/coach">
+                    <Button size="sm" className="gap-1.5 bg-primary font-semibold shadow-sm shadow-primary/20">
+                      <BrainCircuit className="h-4 w-4" />
+                      Start coaching
+                    </Button>
+                  </Link>
+                </div>
               </div>
             </div>
 
@@ -565,7 +702,7 @@ export default function DashboardPage() {
               <StatCard
                 icon={<TrendingUp className="h-4 w-4 text-primary" />}
                 label="Overall Score"
-                value={`${data.skillProfile?.overallScore ?? "—"}/100`}
+                value={`${activeSkillProfile?.overallScore ?? "—"}/100`}
                 sub="Skill index across all topics"
                 color="bg-primary/10"
               />
@@ -603,8 +740,8 @@ export default function DashboardPage() {
                     </div>
                     <h3 className="font-semibold text-foreground">Skill Radar</h3>
                   </div>
-                  {data.skillProfile ? (
-                    <SkillRadarChart profile={data.skillProfile} />
+                  {activeSkillProfile ? (
+                    <SkillRadarChart profile={activeSkillProfile} />
                   ) : (
                     <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
                       Not enough data for radar chart. Solve more rated problems.
@@ -615,11 +752,11 @@ export default function DashboardPage() {
 
               {/* AI Summary */}
               <div className="lg:col-span-2">
-                {data.skillProfile ? (
+                {activeSkillProfile ? (
                   <AISummaryCard
-                    skillProfile={data.skillProfile}
+                    skillProfile={activeSkillProfile}
                     userRating={data.rating}
-                    handle={data.handle}
+                    handle={displayHandle}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center rounded-2xl border border-border/50 bg-card/80 p-6 text-sm text-muted-foreground">
@@ -629,10 +766,10 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Recommendations */}
-            {data.skillProfile && (
+            {/* Recommendations (CF-only — needs CF problem links) */}
+            {platform !== "lc" && data.cfSkillProfile && (
               <RecommendedSection
-                skillProfile={data.skillProfile}
+                skillProfile={activeSkillProfile ?? data.cfSkillProfile}
                 userRating={data.rating}
                 solvedKeys={data.solvedKeys}
               />

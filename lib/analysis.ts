@@ -260,7 +260,7 @@ function findFailureThreshold(brackets: BracketStat[]): number | null {
   return null;
 }
 
-function generateRecommendation(topic: TopicSkill): string {
+export function generateRecommendation(topic: TopicSkill): string {
   const { skillScore, failureThreshold, attempted } = topic;
 
   if (attempted < 3) {
@@ -474,4 +474,189 @@ export function buildSkillProfile(
     strongestTopics,
     radarData,
   };
+}
+
+// ─── LeetCode skill profile ───────────────────────────────────────────────────
+
+import type { LCTagCount } from "@/lib/leetcode";
+import { LC_TAG_TO_TOPIC } from "@/lib/leetcode";
+
+/**
+ * Build a SkillProfile from LeetCode tag-level solved counts.
+ * Since LC doesn't expose per-topic attempt counts, we estimate:
+ *   attempted ≈ solved / 0.65 (typical ~65% topic solve rate)
+ * Score is volume-based: score = 25 + 65 * (1 - exp(-solved/20)), capped at 90.
+ */
+export function buildLCSkillProfile(
+  tagCounts: LCTagCount[],
+  totalSolved: number
+): SkillProfile {
+  // Aggregate solved counts per canonical topic
+  const topicSolved = new Map<string, number>();
+  for (const { tagSlug, problemsSolved } of tagCounts) {
+    const topicId = LC_TAG_TO_TOPIC[tagSlug];
+    if (!topicId) continue;
+    topicSolved.set(topicId, (topicSolved.get(topicId) ?? 0) + problemsSolved);
+  }
+
+  const topics: TopicSkill[] = TOPICS.map((topicDef) => {
+    const solved = topicSolved.get(topicDef.id) ?? 0;
+    // Estimated attempts (65% solve rate approximation)
+    const attempted = solved > 0 ? Math.round(solved / 0.65) : 0;
+    // Volume-based skill score, max 90 (acknowledging we lack solve-rate data)
+    const rawScore = solved > 0 ? 25 + 65 * (1 - Math.exp(-solved / 20)) : 0;
+    const skillScore = Math.round(Math.max(0, Math.min(90, rawScore)));
+
+    return {
+      topicId: topicDef.id,
+      label: topicDef.label,
+      shortLabel: topicDef.shortLabel,
+      skillScore,
+      solveRate: solved > 0 ? 0.65 : 0,
+      expectedSolveRate: 0.5,
+      attempted,
+      solved,
+      brackets: [],
+      failureThreshold: null,
+    };
+  });
+
+  const radarTopics = topics
+    .filter((t) => t.solved >= 3)
+    .sort((a, b) => b.attempted - a.attempted)
+    .slice(0, 8);
+
+  const radarData: RadarPoint[] = radarTopics.map((t) => ({
+    topic: t.shortLabel,
+    score: t.skillScore,
+    fullMark: 100,
+  }));
+
+  const rankedTopics = topics
+    .filter((t) => t.solved >= 3)
+    .sort((a, b) => a.skillScore - b.skillScore);
+
+  const weakestTopics = rankedTopics.slice(0, 5).map(toInsightFn);
+  const strongestTopics = rankedTopics.slice(-5).reverse().map(toInsightFn);
+
+  const scoredTopics = topics.filter((t) => t.solved >= 3);
+  const totalWeight = scoredTopics.reduce((s, t) => s + t.attempted, 0);
+  const overallScore =
+    totalWeight > 0
+      ? Math.round(
+          scoredTopics.reduce((s, t) => s + t.skillScore * t.attempted, 0) /
+            totalWeight
+        )
+      : totalSolved > 0 ? 40 : 0;
+
+  return { overallScore, topics, weakestTopics, strongestTopics, radarData };
+}
+
+// Shared insight builder (extracted for reuse)
+function toInsightFn(t: TopicSkill): WeakTopicInsight {
+  return {
+    topicId: t.topicId,
+    label: t.label,
+    shortLabel: t.shortLabel,
+    skillScore: t.skillScore,
+    failureThreshold: t.failureThreshold,
+    recommendation: generateRecommendation(t),
+    attempted: t.attempted,
+  };
+}
+
+// ─── Merge CF + LC skill profiles ────────────────────────────────────────────
+
+/**
+ * Merge two SkillProfiles (CF + LC) into a combined view.
+ * For each topic, weighted average score by attempt count.
+ * Returns whichever profile is non-null if only one is available.
+ */
+export function mergeSkillProfiles(
+  cf: SkillProfile | null,
+  lc: SkillProfile | null
+): SkillProfile | null {
+  if (!cf && !lc) return null;
+  if (!cf) return lc;
+  if (!lc) return cf;
+
+  const topics: TopicSkill[] = TOPICS.map((topicDef) => {
+    const cfT = cf.topics.find((t) => t.topicId === topicDef.id);
+    const lcT = lc.topics.find((t) => t.topicId === topicDef.id);
+
+    const cfAttempted = cfT?.attempted ?? 0;
+    const lcAttempted = lcT?.attempted ?? 0;
+
+    // Need data from at least one platform
+    if (cfAttempted === 0 && lcAttempted === 0) {
+      // No data on either platform
+      return cfT ?? lcT ?? {
+        topicId: topicDef.id,
+        label: topicDef.label,
+        shortLabel: topicDef.shortLabel,
+        skillScore: 50,
+        solveRate: 0,
+        expectedSolveRate: 0.5,
+        attempted: 0,
+        solved: 0,
+        brackets: [],
+        failureThreshold: null,
+      };
+    }
+
+    const totalAttempted = cfAttempted + lcAttempted;
+    const cfScore = cfT?.skillScore ?? 50;
+    const lcScore = lcT?.skillScore ?? 50;
+    const mergedScore =
+      cfAttempted === 0
+        ? lcScore
+        : lcAttempted === 0
+        ? cfScore
+        : Math.round(
+            (cfScore * cfAttempted + lcScore * lcAttempted) / totalAttempted
+          );
+
+    return {
+      topicId: topicDef.id,
+      label: topicDef.label,
+      shortLabel: topicDef.shortLabel,
+      skillScore: mergedScore,
+      solveRate: cfT?.solveRate ?? lcT?.solveRate ?? 0,
+      expectedSolveRate: cfT?.expectedSolveRate ?? 0.5,
+      attempted: totalAttempted,
+      solved: (cfT?.solved ?? 0) + (lcT?.solved ?? 0),
+      brackets: cfT?.brackets ?? [],
+      failureThreshold: cfT?.failureThreshold ?? null,
+    };
+  });
+
+  const radarTopics = topics
+    .filter((t) => t.attempted >= 5)
+    .sort((a, b) => b.attempted - a.attempted)
+    .slice(0, 8);
+
+  const radarData: RadarPoint[] = radarTopics.map((t) => ({
+    topic: t.shortLabel,
+    score: t.skillScore,
+    fullMark: 100,
+  }));
+
+  const rankedTopics = topics
+    .filter((t) => t.attempted >= 3)
+    .sort((a, b) => a.skillScore - b.skillScore);
+
+  const weakestTopics = rankedTopics.slice(0, 5).map(toInsightFn);
+  const strongestTopics = rankedTopics.slice(-5).reverse().map(toInsightFn);
+
+  const scoredTopics = topics.filter((t) => t.attempted >= 3);
+  const totalWeight = scoredTopics.reduce((s, t) => s + t.attempted, 0);
+  const overallScore =
+    totalWeight > 0
+      ? Math.round(
+          scoredTopics.reduce((s, t) => s + t.skillScore * t.attempted, 0) /
+            totalWeight
+        )
+      : 50;
+
+  return { overallScore, topics, weakestTopics, strongestTopics, radarData };
 }
