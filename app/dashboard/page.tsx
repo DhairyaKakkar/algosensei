@@ -7,8 +7,10 @@ import { SkillRadarChart } from "@/components/skill-radar-chart";
 import { Button } from "@/components/ui/button";
 import type { SkillProfile } from "@/lib/analysis";
 import type { Recommendation } from "@/app/api/recommend/route";
+import { supabase } from "@/lib/supabase";
 import {
   BrainCircuit,
+  CheckCircle2,
   ExternalLink,
   Flame,
   Loader2,
@@ -391,6 +393,105 @@ function RecommendedSection({
   );
 }
 
+// ── Contest History ───────────────────────────────────────────────────────────
+
+interface ContestRow {
+  id: string;
+  started_at: string;
+  duration_minutes: number;
+  score: number | null;
+  results: { solvedCount: number; problems: { verdict: string }[] } | null;
+  problems: { rating: number }[];
+}
+
+function ContestHistoryCard() {
+  const [contests, setContests] = useState<ContestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user) { setLoading(false); return; }
+      const { data: rows } = await supabase
+        .from("virtual_contests")
+        .select("id, started_at, duration_minutes, score, results, problems")
+        .eq("user_id", data.user.id)
+        .not("results", "is", null)
+        .order("started_at", { ascending: false })
+        .limit(5);
+      setContests((rows as ContestRow[]) ?? []);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return (
+    <div className="h-32 animate-pulse rounded-2xl bg-muted/20" />
+  );
+  if (contests.length === 0) return null;
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
+            <Trophy className="h-4 w-4 text-amber-400" />
+          </div>
+          <h3 className="font-semibold text-foreground">Recent Contests</h3>
+        </div>
+        <Link
+          href="/contest"
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline transition-colors"
+        >
+          Play →
+        </Link>
+      </div>
+
+      <div className="space-y-2">
+        {contests.map((c) => {
+          const solved = c.results?.solvedCount ?? 0;
+          const total = c.problems?.length ?? 5;
+          const ratings = c.problems?.map((p) => p.rating).filter(Boolean) ?? [];
+          const ratingRange = ratings.length
+            ? `${Math.min(...ratings)}–${Math.max(...ratings)}`
+            : "—";
+          const date = new Date(c.started_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          });
+
+          return (
+            <div
+              key={c.id}
+              className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/50 px-4 py-3"
+            >
+              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                solved === total ? "bg-emerald-500/10" : solved >= total / 2 ? "bg-amber-500/10" : "bg-muted/30"
+              }`}>
+                <CheckCircle2 className={`h-4 w-4 ${
+                  solved === total ? "text-emerald-400" : solved >= total / 2 ? "text-amber-400" : "text-muted-foreground/50"
+                }`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">
+                    {solved}/{total} solved
+                  </span>
+                  <span className="text-xs text-muted-foreground">· {ratingRange}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">{date}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-sm font-semibold tabular-nums text-foreground">
+                  {c.score ?? 0} pts
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -536,6 +637,34 @@ export default function DashboardPage() {
                 solvedKeys={data.solvedKeys}
               />
             )}
+
+            {/* Contest history */}
+            <ContestHistoryCard />
+
+            {/* Contest CTA */}
+            <div className="relative overflow-hidden rounded-2xl border border-amber-500/20 bg-card/80 p-6 shadow-lg shadow-amber-500/5">
+              <div className="absolute inset-0 -z-10 bg-gradient-to-br from-amber-500/5 to-orange-500/5" />
+              <div className="absolute inset-0 -z-10 bg-card/60" />
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500/10">
+                    <Trophy className="h-6 w-6 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-foreground">Test yourself in a virtual contest</h3>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      5 problems · 2-hour timer · AI post-contest analysis targeting your weak topics
+                    </p>
+                  </div>
+                </div>
+                <Link href="/contest" className="shrink-0">
+                  <Button className="gap-2 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/20 font-semibold" variant="outline">
+                    <Trophy className="h-4 w-4" />
+                    Start
+                  </Button>
+                </Link>
+              </div>
+            </div>
 
             {/* Coaching CTA */}
             <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card/80 p-8 text-center shadow-lg shadow-primary/5">

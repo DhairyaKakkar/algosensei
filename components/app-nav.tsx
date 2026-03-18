@@ -5,13 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
-import { BrainCircuit, LayoutDashboard, ListChecks, LogIn, LogOut, Zap } from "lucide-react";
+import { BrainCircuit, LayoutDashboard, ListChecks, LogIn, LogOut, Trophy, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/problems", label: "Problems", icon: ListChecks },
+  { href: "/contest", label: "Contest", icon: Trophy },
   { href: "/coach", label: "AI Coach", icon: BrainCircuit },
 ];
 
