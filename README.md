@@ -1,36 +1,115 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AlgoSensei
+
+AI-powered competitive programming coach for Codeforces users. Analyzes your submission history, identifies skill weaknesses, and provides personalized problem recommendations and Socratic coaching sessions.
+
+## Features
+
+- **Profile analysis** — Fetches and analyzes your full Codeforces submission history
+- **Skill radar** — Visual breakdown of skill scores across 10 topic areas (DP, Graphs, Greedy, etc.)
+- **AI coaching chat** — Socratic coaching on any Codeforces problem via GPT-4o
+- **Smart recommendations** — AI-ranked practice problems targeting your weakest topics
+- **Dashboard** — Stats, weekly activity, and recommended next problems
+- **Auth** — Email/password and GitHub OAuth via Supabase
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment variables
+
+Create `.env.local` in the project root:
+
+```env
+OPENAI_API_KEY=sk-...
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+### 3. Set up Supabase auth
+
+#### Email/password auth
+Works out of the box — no extra configuration needed.
+
+#### GitHub OAuth
+
+1. **Create a GitHub OAuth App**
+   - Go to [GitHub Settings → Developer settings → OAuth Apps](https://github.com/settings/developers)
+   - Click **New OAuth App**
+   - Set **Homepage URL** to `http://localhost:3000` (or your production URL)
+   - Set **Authorization callback URL** to:
+     ```
+     https://<your-project-ref>.supabase.co/auth/v1/callback
+     ```
+   - Save, then copy the **Client ID** and generate a **Client Secret**
+
+2. **Enable GitHub provider in Supabase**
+   - Open your [Supabase project dashboard](https://supabase.com/dashboard)
+   - Go to **Authentication → Providers**
+   - Enable **GitHub** and paste your Client ID and Client Secret
+   - Save
+
+3. **Add redirect URLs in Supabase**
+   - In Supabase, go to **Authentication → URL Configuration**
+   - Add to **Redirect URLs**:
+     ```
+     http://localhost:3000/auth/callback
+     ```
+   - For production deployments also add:
+     ```
+     https://yourdomain.com/auth/callback
+     ```
+   - Save
+
+4. **Set `NEXT_PUBLIC_APP_URL`** in `.env.local` to match your environment (used as the `redirectTo` origin when calling `signInWithOAuth`).
+
+### 4. Run the development server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+app/
+  page.tsx                  # Landing page
+  dashboard/page.tsx        # Main dashboard (handle → stats + radar + recommendations)
+  coach/page.tsx            # AI coaching chat
+  problems/page.tsx         # Smart problem recommendations
+  auth/page.tsx             # Sign in / sign up
+  auth/callback/page.tsx    # OAuth callback handler
+  api/
+    codeforces/sync/        # Fetch + analyze Codeforces profile
+    coach/                  # Problem metadata (GET) + streaming chat (POST)
+    recommend/              # AI-ranked problem recommendations
+    ai-summary/             # GPT-4o coaching summary
 
-## Learn More
+components/
+  app-nav.tsx               # Shared sticky nav with auth state
+  skill-radar-chart.tsx     # Recharts radar visualization
+  cf-handle-form.tsx        # Inline analysis form on landing page
 
-To learn more about Next.js, take a look at the following resources:
+lib/
+  analysis.ts               # Skill scoring engine (10 topics, logistic model)
+  codeforces.ts             # CF API types and fetch helpers
+  coach.ts                  # Shared types for coach feature
+  openai.ts                 # OpenAI client
+  supabase.ts               # Supabase browser client
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tech Stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Next.js 14** (App Router)
+- **TypeScript**
+- **Tailwind CSS v3**
+- **Recharts** — radar chart
+- **OpenAI SDK** — GPT-4o for coaching, recommendations, and summaries
+- **Supabase JS v2** — auth (email + GitHub OAuth)
+- **Codeforces public API** — submission history and problem data
