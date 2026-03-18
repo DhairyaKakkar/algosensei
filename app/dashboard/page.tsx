@@ -14,8 +14,10 @@ import {
   CheckCircle2,
   ExternalLink,
   Flame,
+  Link2,
   Loader2,
   RefreshCw,
+  Share2,
   Sparkles,
   Target,
   TrendingUp,
@@ -580,6 +582,51 @@ function ContestHistoryCard() {
   );
 }
 
+// ── Share profile button ───────────────────────────────────────────────────────
+
+function ShareProfileButton({ handle }: { handle: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "open">("idle");
+
+  async function handleShare() {
+    const url = `${window.location.origin}/share/${encodeURIComponent(handle)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setState("copied");
+      setTimeout(() => setState("idle"), 2000);
+    } catch {
+      // Fallback: open the share page
+      window.open(url, "_blank");
+      setState("open");
+      setTimeout(() => setState("idle"), 2000);
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleShare}
+      className={`gap-1.5 transition-colors ${
+        state === "copied"
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15"
+          : "border-border/50"
+      }`}
+    >
+      {state === "copied" ? (
+        <>
+          <Link2 className="h-4 w-4" />
+          Copied!
+        </>
+      ) : (
+        <>
+          <Share2 className="h-4 w-4" />
+          Share
+        </>
+      )}
+    </Button>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -681,6 +728,7 @@ export default function DashboardPage() {
               <div className="flex flex-col items-end gap-2">
                 <PlatformToggle data={data} platform={platform} onChange={setPlatform} />
                 <div className="flex gap-2">
+                  <ShareProfileButton handle={data.handle} />
                   <Link href="/problems">
                     <Button variant="outline" size="sm" className="gap-1.5 border-border/50">
                       <Trophy className="h-4 w-4" />
