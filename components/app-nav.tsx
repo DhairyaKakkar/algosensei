@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
-import { BrainCircuit, LayoutDashboard, ListChecks, LogIn, LogOut, Trophy, TrendingUp, Zap } from "lucide-react";
+import { BrainCircuit, LayoutDashboard, ListChecks, LogIn, LogOut, Settings, Trophy, TrendingUp, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -80,10 +80,20 @@ export function AppNav() {
           {loading ? (
             <div className="h-8 w-20 animate-pulse rounded-lg bg-accent" />
           ) : user ? (
-            <div className="flex items-center gap-3">
-              <span className="hidden text-xs text-muted-foreground sm:block truncate max-w-[160px]">
+            <div className="flex items-center gap-2">
+              <span className="hidden text-xs text-muted-foreground sm:block truncate max-w-[120px]">
                 {user.email}
               </span>
+              <Link href="/settings">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                  title="Settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </Link>
               <Button
                 size="sm"
                 variant="ghost"
