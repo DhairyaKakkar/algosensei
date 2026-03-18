@@ -27,8 +27,11 @@ Create `.env.local` in the project root:
 OPENAI_API_KEY=sk-...
 NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` is used by server-side API routes (contest generate/submit) to write to the database. Find it in your Supabase dashboard under **Project Settings → API → service_role**. Never expose it to the browser.
 
 ### 3. Set up Supabase auth
 
